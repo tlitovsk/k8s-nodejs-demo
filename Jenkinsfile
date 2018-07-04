@@ -64,10 +64,42 @@ spec:
             stage('Build'){
                     docker.withRegistry('https://registry.hub.docker.com', 'dockerhub'){
                         shortCommit = sh(returnStdout: true, script: "git log -n 1 --pretty=format:'%h'").trim()
-                        def hello_image = docker.build("tlitovsk/kubernetes-nodejs-helloworld:${shortCommit}")
+                        def hello_image = docker.build("tlitovsk/k8s-nodejs-demo:${shortCommit}")
                         currentBuild.result = "SUCCESS"
                         hello_image.push()
                     }
+            }
+            if (env.BRANCH_NAME != 'master') {
+                stage('Integration tests'){
+                        shortCommit = sh(returnStdout: true, script: "git log -n 1 --pretty=format:'%h'").trim()
+                        testNamespace = "${namespace}-${shortCommit}-${BUILD_NUMBER}"
+                        sh "kubectl get deployments --namespace=${testNamespace}"
+                        sh "cd deployment \
+                            && sed -i s/ver1/${shortCommit}/ hello-2.yaml \
+                            && kubectl delete ns ${testNamespace} || true \
+                            && kubectl create ns ${testNamespace}\
+                            && kubectl create -f hello-3-service.yaml --namespace=${testNamespace}\
+                            && kubectl create -f hello-2.yaml --namespace=${testNamespace}"
+                        sh "sleep 3"
+                        sh "kubectl rollout status deployment/hello-deployment --namespace=${testNamespace}"
+                        sh "sleep 3"
+                        sh "curl http://hello-service.${testNamespace}.svc.cluster.local:8080"
+                        sh "curl http://hello-service.${testNamespace}.svc.cluster.local:8080/world"
+                        sh "curl http://hello-service.${testNamespace}.svc.cluster.local:8080/vodafone"                        //
+                        sh "kubectl delete ns ${testNamespace}"
+
+                }
+            }else{
+                stage('Deploy')
+                {
+                    shortCommit = sh(returnStdout: true, script: "git log -n 1 --pretty=format:'%h'").trim()
+                    sh "kubectl get deployments --namespace=${namespace}"
+                    sh "cd deployment \
+                        && sed -i s/ver1/${shortCommit}/ hello-2.yaml \
+                        && kubectl apply -f hello-2.yaml --namespace=${namespace}"
+                    sh "kubectl rollout status deployment/hello-deployment --namespace=${namespace}"
+                    
+                }
             }
         }
         catch (err) {
